@@ -1,0 +1,36 @@
+/__pycache__
+/alto_xml
+/alto_xml_transform.py
+/alto_xml_transform_multipage.py
+/assess_text
+/backrooms
+/enviroments
+/hdf5_files
+/hdf5reader
+/lda_corpus
+/lda_CWNP_model
+/lda_model
+/lda_ndnp_models
+/lda_testing_evaluation
+/lda_topic_titles
+/lda_wiki_models
+/loc_sh
+/MasterPipeline
+/misc
+/ocr_shelf_1
+/ocr_shelf_1_utf16
+/ocr_shelf_4
+/ocr_shelf_4_utf16
+/ocr_utf16
+/output
+/req_emb
+/Project workflow software description.xlsx
+/u0002_0000007.range_48_shelf_1_ALTO
+/u0002_0000007.range_48_shelf_1_jpeg_clippings
+/u0002_0000007.range_48_shelf_1_xml_skeletons
+/u0002_0000007.range_48_shelf_4_ALTO
+/u0002_0000007.range_48_shelf_4_jpeg_clippings
+/u0002_0000007.range_48_shelf_4_xml_skeletons
+/working
+/xml_testin
+/~$Project workflow software description.xlsx
