@@ -1,0 +1,160 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<xs:schema xmlns:xlink="http://www.w3.org/1999/xlink" xmlns:xs="http://www.w3.org/2001/XMLSchema" xmlns="http://libcontent.lib.ua.edu/digital/schemas/DOB" targetNamespace="http://libcontent.lib.ua.edu/digital/schemas/DOB" elementFormDefault="qualified" attributeFormDefault="unqualified">
+<xs:import namespace="http://www.w3.org/XML/1998/namespace" schemaLocation="http://www.loc.gov/mods/xml.xsd"/>
+<xs:import namespace="http://www.w3.org/1999/xlink" schemaLocation="http://www.loc.gov/standards/xlink/xlink.xsd"/>
+
+    <!-- Define bounding box value pattern -->
+    <xs:simpleType name="bBoxArrayPattern">
+        <xs:restriction base="xs:string">
+			<!-- ulx,uly; urx,ury; lrx,lry; llx,lly pattern.(\d+),(\d+); (\d+),(\d+); (\d+),(\d+); (\d+),(\d+)$ the four points of the bounding box start at the upper left and proceede clockwise-->
+            <xs:pattern value="\d+,\d+; \d+,\d+; \d+,\d+; \d+,\d+"/>
+        </xs:restriction>
+    </xs:simpleType>
+	
+    <!-- Define streamIdentifier value pattern -->
+    <xs:simpleType name="streamIdentifierPattern">
+        <xs:restriction base="xs:string">
+			<!-- stream level local identifier x9999_9999999_9999999 pattern.  	^[a-z](\d)(\d)(\d)(\d)_(\d)(\d)(\d)(\d)(\d)(\d)(\d)_(\d)(\d)(\d)(\d)(\d)(\d)(\d)$-->
+            <xs:pattern value="[a-z]\d{4}_\d{7}_\d{7}"/>
+        </xs:restriction>
+    </xs:simpleType>
+	
+    <!-- Define fileIdentifier value pattern -->
+    <xs:simpleType name="fileIdentifierPattern">
+        <xs:restriction base="xs:string">
+			<!-- File level local identifier x9999_9999999_9999999_9999 pattern. -->
+            <xs:pattern value="[a-z]\d{4}_\d{7}_\d{7}_\d{4}"/>
+        </xs:restriction>
+    </xs:simpleType>
+	
+    <!-- Define segmentIdentifier value pattern -->
+    <xs:simpleType name="segmentIdentifierPattern">
+        <xs:restriction base="xs:string">
+			<!-- segment level local identifier x9999_9999999_9999999_9999_999 pattern. -->
+            <xs:pattern value="[a-z]\d{4}_\d{7}_\d{7}_\d{4}_\d{3}"/>
+        </xs:restriction>
+    </xs:simpleType>
+	
+	<!-- Define root element of the dataObject extension -->
+	<!-- / -->
+	<xs:element name="dataObject">
+		<xs:complexType>
+			<xs:sequence>
+				<!-- dataObject/ -->
+				<xs:element name="dataUri" type="xs:string" minOccurs="1" maxOccurs="1"/>
+				
+				<!-- Define fileStream element -->
+				<xs:element name="fileStream" minOccurs="1" maxOccurs="1">
+					<xs:complexType>
+						<xs:sequence>
+							<!-- dataObject/fileStream/ -->
+							<xs:element name="streamIdentifier" type="streamIdentifierPattern" minOccurs="1" maxOccurs="1"/>
+							
+							<xs:element name="fileStreamVectorEmbedding" minOccurs="0" maxOccurs="1">
+								<xs:complexType>
+									<xs:sequence>
+										<!-- dataObject/fileStream/fileStreamVectorEmbedding/ -->
+										<xs:element name="fs_embedding" type="xs:string" minOccurs="1" maxOccurs="1"/>
+										<xs:element name="fs_embeddingDate" type="xs:string" minOccurs="1" maxOccurs="1"/>
+										<xs:element name="fs_modelName" type="xs:string" minOccurs="1" maxOccurs="1"/>
+									</xs:sequence>
+								</xs:complexType>
+							</xs:element>
+							
+							<xs:element name="fileStreamEmbDesc" minOccurs="0" maxOccurs="1">
+								<xs:complexType>
+									<xs:sequence>
+										<!-- dataObject/fileStream/fileStreamEmbDesc/ -->
+										<xs:element name="fsd_description" type="xs:string" minOccurs="1" maxOccurs="1"/>
+										<xs:element name="fsd_descriptionDate" type="xs:string" minOccurs="1" maxOccurs="1"/>
+										<xs:element name="fsd_modelName" type="xs:string" minOccurs="1" maxOccurs="1"/>
+									</xs:sequence>
+								</xs:complexType>
+							</xs:element>
+							
+							<!-- Define fileStream descriptive metadata -->
+							<!--<xs:element name="fileStreamTitle" type="xs:string" minOccurs="0" maxOccurs="1"/> -->
+							<!--<xs:element name="fileStreamDate" type="xs:string" minOccurs="0" maxOccurs="1"/> -->
+							<!--<xs:element name="fileStreamAuthor" type="xs:string" minOccurs="0" maxOccurs="1"/> -->
+							<!--<xs:element name="fileStreamAbstract" type="xs:string" minOccurs="0" maxOccurs="1"/> -->
+							
+							<!-- Define file element -->
+							<xs:element name="file" minOccurs="1" maxOccurs="unbounded">
+								<xs:complexType>
+									<xs:sequence>
+										<!-- dataObject/fileStream/file/ -->
+										<xs:element name="fileUri" type="xs:string" minOccurs="1" maxOccurs="1"/>
+										<xs:element name="fileIdentifier" type="fileIdentifierPattern" minOccurs="1" maxOccurs="1"/>
+										<xs:element name="imageWidthX" type="xs:string" minOccurs="0" maxOccurs="1"/>
+										<xs:element name="imageHeightY" type="xs:string" minOccurs="0" maxOccurs="1"/>
+										<xs:element name="fileVectorEmbedding" minOccurs="0" maxOccurs="1">
+											<xs:complexType>
+												<xs:sequence>
+													<!-- dataObject/fileStream/file/fileVectorEmbedding/ -->
+													<xs:element name="f_embedding" type="xs:string" minOccurs="1" maxOccurs="1"/>
+													<xs:element name="f_embeddingDate" type="xs:string" minOccurs="1" maxOccurs="1"/>
+													<xs:element name="f_modelName" type="xs:string" minOccurs="1" maxOccurs="1"/>
+												</xs:sequence>
+											</xs:complexType>
+										</xs:element>	
+											
+										<xs:element name="fileEmbDesc" minOccurs="0" maxOccurs="1">
+											<xs:complexType>
+												<xs:sequence>
+													<!-- dataObject/fileStream/file/fileEmbDesc/ -->
+													<xs:element name="fd_description" type="xs:string" minOccurs="1" maxOccurs="1"/>
+													<xs:element name="fd_descriptionDate" type="xs:string" minOccurs="1" maxOccurs="1"/>
+													<xs:element name="fd_modelName" type="xs:string" minOccurs="1" maxOccurs="1"/>
+												</xs:sequence>
+											</xs:complexType>
+										</xs:element>
+										
+										<!-- Define segment element -->
+										<xs:element name="segment" minOccurs="0" maxOccurs="unbounded">
+											<xs:complexType>
+												<xs:sequence>
+													<!-- dataObject/fileStream/file/segment/ -->
+													<xs:element name="segmentIdentifier" type="segmentIdentifierPattern" minOccurs="1" maxOccurs="1"/>
+													<xs:element name="classification" type="xs:string" minOccurs="0" maxOccurs="1"/>
+													<xs:element name="boundingBox" type="bBoxArrayPattern" minOccurs="1" maxOccurs="1"/>
+													<xs:element name="transcription" type="xs:string" minOccurs="0" maxOccurs="1"/>
+													
+													<xs:element name="segmentVectorEmbedding" minOccurs="0" maxOccurs="1">
+														<xs:complexType>
+															<xs:sequence>
+																<!-- dataObject/fileStream/file/segment/segmentVectorEmbedding/ -->
+																<xs:element name="s_embedding" type="xs:string" minOccurs="1" maxOccurs="1"/>
+																<xs:element name="s_embeddingDate" type="xs:string" minOccurs="1" maxOccurs="1"/>
+																<xs:element name="s_modelName" type="xs:string" minOccurs="1" maxOccurs="1"/>
+															</xs:sequence>
+														</xs:complexType>
+													</xs:element>
+													
+													<xs:element name="segmentEmbDesc" minOccurs="0" maxOccurs="1">
+														<xs:complexType>
+															<xs:sequence>
+																<!-- dataObject/fileStream/file/segment/segmentEmbDesc/ -->
+																<xs:element name="sd_description" type="xs:string" minOccurs="1" maxOccurs="1"/>
+																<xs:element name="sd_descriptionDate" type="xs:string" minOccurs="1" maxOccurs="1"/>
+																<xs:element name="sd_modelName" type="xs:string" minOccurs="1" maxOccurs="1"/>
+															</xs:sequence>
+														</xs:complexType>
+													</xs:element>
+													
+												</xs:sequence>
+											</xs:complexType>
+										</xs:element>
+											
+									</xs:sequence>
+								</xs:complexType>
+							</xs:element>
+							
+						</xs:sequence>
+					</xs:complexType>
+				</xs:element>
+				
+			</xs:sequence>
+		</xs:complexType>
+	</xs:element>
+	
+</xs:schema>
