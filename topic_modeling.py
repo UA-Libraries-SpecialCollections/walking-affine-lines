@@ -379,6 +379,16 @@ def mk_delta_manifold(item_id, item_text):
     def embed_segments(segments):
         """Generate embeddings for each segment using a sentence transformer."""
         return model.encode(segments, normalize_embeddings=True)
+    
+    # Project out the top-n principal directions (common components) from L2-normalized embeddings,
+    # then renormalize. Works well with n in {1,2,3}.    
+    def remove_top_components(E: np.ndarray, n: int = 2) -> np.ndarray:
+        X = E - E.mean(axis=0, keepdims=True)
+        U, S, Vt = np.linalg.svd(X, full_matrices=False)
+        P = Vt[:n].T                     # (d, n)
+        X2 = X - X @ P @ P.T             # remove the shared subspace
+        X2 /= (np.linalg.norm(X2, axis=1, keepdims=True) + 1e-12)
+        return X2    
         
     # Summary: choose_k_via_silhouette — select a robust cluster count using
     #          agglomerative clustering and cosine‐silhouette (with safe fallbacks).
@@ -403,9 +413,9 @@ def mk_delta_manifold(item_id, item_text):
         best_k, best_score = None, -1.0
         for k in range(start, k_high + 1):
             try:
-                model = AgglomerativeClustering(n_clusters=k, linkage='average', metric='cosine')
+                model = AgglomerativeClustering(n_clusters=k, linkage='complete', metric='cosine')
             except TypeError:
-                model = AgglomerativeClustering(n_clusters=k, linkage='average', affinity='cosine')  # older sklearn
+                model = AgglomerativeClustering(n_clusters=k, linkage='complete', affinity='cosine')  # older sklearn
             labels = model.fit_predict(embeddings)
             if len(set(labels)) < 2:
                 continue
@@ -417,6 +427,47 @@ def mk_delta_manifold(item_id, item_text):
                 best_k, best_score = k, score
 
         return best_k if best_k is not None else 2  # safe fallback
+
+    def choose_k_size_aware(
+        embeddings,
+        k_min=3,
+        k_max=10,
+        alpha=0.25,            # how much to reward balance (normalized entropy)
+        min_cluster_size=5     # penalize k that produces tiny clusters
+    ):
+        n = len(embeddings)
+        if n <= 1: return 1
+        if n == 2: return 2
+        k_hi = min(int(k_max), n - 1)
+        k_lo = max(2, int(k_min))
+
+        best_k, best_score = None, -1e9
+        for k in range(k_lo, k_hi + 1):
+            try:
+                try:
+                    model = AgglomerativeClustering(n_clusters=k, linkage='average', metric='cosine')
+                except TypeError:
+                    model = AgglomerativeClustering(n_clusters=k, linkage='average', affinity='cosine')
+                labels = model.fit_predict(embeddings)
+            except Exception:
+                continue
+
+            if len(set(labels)) < 2:
+                continue
+
+            try:
+                s = silhouette_score(embeddings, labels, metric='cosine')
+            except Exception:
+                s = -1.0
+
+            H, f_max, counts = _cluster_balance_metrics(labels, k)
+            # small penalty for tiny clusters
+            penalty = 0.10 * int((counts < min_cluster_size).sum())
+            score = s + alpha * H - penalty
+
+            if score > best_score:
+                best_k, best_score = k, score
+        return best_k if best_k is not None else 2
 
     # Summary: cluster_segments — agglomerative clustering with cosine distance
     #          (clamps degenerate cases, handles k==1 fast path).
@@ -436,10 +487,49 @@ def mk_delta_manifold(item_id, item_text):
             return np.zeros(n, dtype=int)
 
         try:
-            clustering = AgglomerativeClustering(n_clusters=k, linkage='average', metric='cosine')
+            clustering = AgglomerativeClustering(n_clusters=k, linkage='complete', metric='cosine')
         except TypeError:
-            clustering = AgglomerativeClustering(n_clusters=k, linkage='average', affinity='cosine')
+            clustering = AgglomerativeClustering(n_clusters=k, linkage='complete', affinity='cosine')
         return clustering.fit_predict(embeddings)
+
+    def _cluster_balance_metrics(labels, k=None, eps=1e-12):
+        labs = np.asarray(labels, dtype=int)
+        K = int(k if k is not None else (labs.max() + 1))
+        counts = np.bincount(labs, minlength=K).astype(float)
+        p = counts / (counts.sum() + eps)
+        # normalized entropy in [0,1]; 1 == perfectly even
+        H = -np.sum(p * np.log(p + eps)) / np.log(max(2, K))
+        f_max = (counts.max() / max(1.0, counts.sum()))
+        return float(H), float(f_max), counts.astype(int)
+
+    def bisecting_kmeans_spherical(X, k, min_gain=0.01, random_state=0):
+        # start with all points in one cluster; repeatedly split the largest
+        from sklearn.cluster import KMeans
+        Xn = X / (np.linalg.norm(X, axis=1, keepdims=True) + 1e-12)
+        labels = np.zeros(Xn.shape[0], dtype=int)
+        K = 1
+        rng = np.random.default_rng(random_state)
+        while K < k:
+            # pick the largest cluster to split
+            sizes = np.bincount(labels, minlength=K)
+            c = int(np.argmax(sizes))
+            idx = np.where(labels == c)[0]
+            if len(idx) < 4:     # too small to split stably
+                break
+            km = KMeans(n_clusters=2, n_init=10, random_state=rng.integers(1e9))
+            sub = km.fit_predict(Xn[idx])
+            # simple gain proxy: variance explained increase
+            old_cent = Xn[idx].mean(axis=0)
+            new_cent = np.vstack([Xn[idx][sub==0].mean(axis=0), Xn[idx][sub==1].mean(axis=0)])
+            gain = float(np.linalg.norm(new_cent[0]-old_cent) + np.linalg.norm(new_cent[1]-old_cent))
+            if gain < min_gain:
+                break
+            # relabel: one child keeps 'c', the other becomes new cluster id K
+            child = (sub.max() if sizes[c] >= 2 else 0)
+            labels[idx[sub == child]] = c
+            labels[idx[sub != child]] = K
+            K += 1
+        return labels
 
     # Summary: compute_cluster_embeddings — mean vector per cluster.
     # Effect: makes cluster centroids to serve as consistent Δ endpoints.
@@ -469,8 +559,13 @@ def mk_delta_manifold(item_id, item_text):
 
     segments = segment_document(item_text)
     embeddings = embed_segments(segments)
-    k = choose_k_via_silhouette(embeddings)
+    embeddings = remove_top_components(embeddings, n=2)   # try n=1..3
+    #k = choose_k_via_silhouette(embeddings)
+    k = choose_k_size_aware(embeddings, k_min=3, k_max=10, alpha=0.25, min_cluster_size=5)
     labels = cluster_segments(embeddings, k)
+    H, f_max, counts = _cluster_balance_metrics(labels, k)
+    if H < 0.55 or f_max > 0.85:
+        labels = bisecting_kmeans_spherical(embeddings, k, min_gain=0.01, random_state=0)
     cluster_embs = compute_cluster_embeddings(embeddings, labels)
     delta_matrix, cluster_order = compute_delta_matrix(cluster_embs)
 
