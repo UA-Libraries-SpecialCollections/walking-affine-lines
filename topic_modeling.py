@@ -586,13 +586,13 @@ def mk_delta_manifold(item_id, item_text, st_model):
     segments = segment_document(item_text)
     embeddings = embed_segments(segments)
     #embeddings = batched_encode(segments, batch_size=2048)
-    embeddings = remove_top_components(embeddings, n=2)   # try n=1..3
+    #embeddings = remove_top_components(embeddings, n=1)   # try n=1..3
     #k = choose_k_via_silhouette(embeddings)
     k = choose_k_size_aware(embeddings, k_min=3, k_max=10, alpha=0.25, min_cluster_size=5)
     labels = cluster_segments(embeddings, k)
-    H, f_max, counts = _cluster_balance_metrics(labels, k)
-    if H < 0.55 or f_max > 0.85:
-        labels = bisecting_kmeans_spherical(embeddings, k, min_gain=0.01, random_state=0)
+    #H, f_max, counts = _cluster_balance_metrics(labels, k)
+    #if H < 0.55 or f_max > 0.85:
+    #    labels = bisecting_kmeans_spherical(embeddings, k, min_gain=0.01, random_state=0)
     cluster_embs = compute_cluster_embeddings(embeddings, labels)
     #cluster_order = sorted(cluster_embs.keys())
     delta_matrix, cluster_order = compute_delta_matrix(cluster_embs)
@@ -2794,7 +2794,7 @@ def plot_morphism_match_field_3d(
             except Exception:
                 pass
             hull_line["obj"] = None
-        hull_line["obj"] = _draw_upper_hull(ax, Zgrid)
+        # hull_line["obj"] = _draw_upper_hull(ax, Zgrid) # toggle this commented line to show the green hull
 
         # legend: replace, do not pile up
         if legend_obj["obj"] is not None:

@@ -1088,7 +1088,7 @@ def main():
         item_text_dict = load_document_texts_by_prefix(21)
 
         # Choose a sensible worker count; leaving 2 cores free helps responsiveness
-        cpu_workers = max(1, 10)
+        cpu_workers = max(1, os.cpu_count() - 4)
 
         document_delta_dict = {}
         segments_by_doc = {}
@@ -1259,7 +1259,7 @@ def main():
         fig = sankey_docs_left(
             tree,
             title="Documents → Arrangement Across a Collections Morphological Membership Refinement Hierarchy",
-            max_docs_left=None,                 # cap left-side nodes; set None for all docs
+            max_docs_left=0,                 # cap left-side nodes; set None for all docs
             save_html=html_save_path,
             open_browser=True,
             height_vh=96,          # try 96–98 for near full-screen
