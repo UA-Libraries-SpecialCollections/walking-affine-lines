@@ -81,6 +81,11 @@ from gensim.parsing.preprocessing import (
 #nltk.download('punkt_tab')
 
 # -----------------------------------------------------------------------------
+# GLOBALS
+_MODEL = None
+# -----------------------------------------------------------------------------
+
+# -----------------------------------------------------------------------------
 # Function: clean_text
 # Summary:
 #   Lowercases raw OCR text, removes non‑alphabetic characters, and collapses
@@ -351,6 +356,25 @@ def plot_documents_with_umap_annotations(
     
 
 # -----------------------------------------------------------------------------
+# Function: mk_delta_manifold helper functions for speed improvements
+def get_sentence_model(device: str | None = None):
+    global _MODEL
+    if _MODEL is None:
+        _MODEL = SentenceTransformer('all-MiniLM-L6-v2', device=device)
+    return _MODEL
+
+def batched_encode(segments: list[str], batch_size: int = 2048, device: str | None = None):
+    m = get_sentence_model(device=device)
+    return m.encode(
+        segments,
+        batch_size=batch_size,
+        show_progress_bar=False,
+        convert_to_numpy=True,
+        normalize_embeddings=True,
+    )
+
+
+# -----------------------------------------------------------------------------
 # Function: mk_delta_manifold
 # Summary:
 #   Segments a single document into sentences, embeds them with a Sentence
@@ -363,10 +387,10 @@ def plot_documents_with_umap_annotations(
 #   between its clusters—the core object used to compare documents by the
 #   shapes and alignments of these morphisms.
 # -----------------------------------------------------------------------------
-def mk_delta_manifold(item_id, item_text):
+def mk_delta_manifold(item_id, item_text, st_model):
 
     # Load sentence transformer model
-    model = SentenceTransformer('all-MiniLM-L6-v2')
+    #st_model = get_sentence_model()  # cached, single GPU model
     
     # Summary: segment_document — sentence‐tokenize the document (NLTK).
     # Effect: stable granularity for embedding and clustering.
@@ -378,7 +402,7 @@ def mk_delta_manifold(item_id, item_text):
     # Effect: places text in a metric space where vector deltas are meaningful.
     def embed_segments(segments):
         """Generate embeddings for each segment using a sentence transformer."""
-        return model.encode(segments, normalize_embeddings=True)
+        return st_model.encode(segments, normalize_embeddings=True)
     
     # Project out the top-n principal directions (common components) from L2-normalized embeddings,
     # then renormalize. Works well with n in {1,2,3}.    
@@ -544,14 +568,16 @@ def mk_delta_manifold(item_id, item_text):
     # Summary: compute_delta_matrix — build Δ[i,j] = μ_j − μ_i and ordered labels.
     # Effect: encodes directed transformations (morphisms) between all cluster pairs.
     def compute_delta_matrix(cluster_embeddings):
-        """Compute delta vectors between each pair of cluster embeddings."""
+        """Compute displacement vectors between each pair of cluster embeddings."""
         labels = sorted(cluster_embeddings.keys())
         n = len(labels)
         delta_matrix = np.zeros((n, n, len(next(iter(cluster_embeddings.values())))))
+        E = np.vstack([cluster_embeddings[l] for l in labels])
+        delta_matrix = E[None, :, :] - E[:, None, :]
 
-        for i in range(n):
-            for j in range(n):
-                delta_matrix[i][j] = cluster_embeddings[labels[j]] - cluster_embeddings[labels[i]]
+        #for i in range(n):
+        #    for j in range(n):
+        #        delta_matrix[i][j] = cluster_embeddings[labels[j]] - cluster_embeddings[labels[i]]
         
         return delta_matrix, labels
 
@@ -559,6 +585,7 @@ def mk_delta_manifold(item_id, item_text):
 
     segments = segment_document(item_text)
     embeddings = embed_segments(segments)
+    #embeddings = batched_encode(segments, batch_size=2048)
     embeddings = remove_top_components(embeddings, n=2)   # try n=1..3
     #k = choose_k_via_silhouette(embeddings)
     k = choose_k_size_aware(embeddings, k_min=3, k_max=10, alpha=0.25, min_cluster_size=5)
@@ -567,6 +594,7 @@ def mk_delta_manifold(item_id, item_text):
     if H < 0.55 or f_max > 0.85:
         labels = bisecting_kmeans_spherical(embeddings, k, min_gain=0.01, random_state=0)
     cluster_embs = compute_cluster_embeddings(embeddings, labels)
+    #cluster_order = sorted(cluster_embs.keys())
     delta_matrix, cluster_order = compute_delta_matrix(cluster_embs)
 
     return delta_matrix, cluster_order, labels, segments, embeddings, k
@@ -586,10 +614,10 @@ def mk_delta_manifold(item_id, item_text):
 #   consumes, unifying *geometry* (Δ, centroids, PC1) with *semantics* (LDA
 #   distributions) so morphisms can be matched, labeled, and analyzed.
 # -----------------------------------------------------------------------------
-def build_cluster_delta_matrix(segments, embeddings, lda_model, lda_dictionary, num_topics=10, n_clusters: int = 5):
+def build_cluster_delta_matrix(segments, embeddings, labels, lda_model, lda_dictionary, num_topics=10, n_clusters: int = 5):
     # Step 1: Cluster segments using embeddings
-    clustering = AgglomerativeClustering(n_clusters=n_clusters, metric='cosine', linkage='average')
-    labels = clustering.fit_predict(embeddings)
+    #clustering = AgglomerativeClustering(n_clusters=n_clusters, metric='cosine', linkage='average')
+    #labels = clustering.fit_predict(embeddings)
 
     # Step 2: Organize segments and embeddings by cluster
     cluster_texts = defaultdict(list)
@@ -656,10 +684,11 @@ def build_cluster_delta_matrix(segments, embeddings, lda_model, lda_dictionary, 
     n = len(cluster_order)
     d = embeddings[0].shape[0]
     delta_matrix = np.zeros((n, n, d))
+    delta_matrix = cluster_embeddings[None, :, :] - cluster_embeddings[:, None, :]
 
-    for i in range(n):
-        for j in range(n):
-            delta_matrix[i, j, :] = cluster_embeddings[j] - cluster_embeddings[i]
+    #for i in range(n):
+    #    for j in range(n):
+    #        delta_matrix[i, j, :] = cluster_embeddings[j] - cluster_embeddings[i]
 
     return (
         delta_matrix,                  # [n x n x d]

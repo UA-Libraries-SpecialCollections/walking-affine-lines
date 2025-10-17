@@ -64,7 +64,6 @@ except:
     os.system("python -m spacy download en_core_web_sm")
     nlp = spacy.load("en_core_web_sm")
 
-
 # ------------------------------------------
 # Function Definitions
 

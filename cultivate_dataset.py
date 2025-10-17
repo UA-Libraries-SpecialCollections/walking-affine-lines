@@ -30,18 +30,17 @@ import nltk
 import os 
 import h5py 
 import tkinter as tk 
-import numpy as np 
-from hdf5reader import hdf5_text
 import spacy
+# from hdf5reader import hdf5_text
 
-# ------------------------------------------
-# Downloads needed to process the text corpus in the assess_txt library 
-nltk.download('punkt') # nltk word and sentence tokenizer models
-nltk.download('averaged_perceptron_tagger') # syntactic category tagger for parts-of-speech
-nltk.download('stopwords') # nltk corpus file containing common structural words
-nltk.download('words') # nltk corpus file. contains ~236,000 english words\
-nltk.download('punkt_tab')
-nltk.download('averaged_perceptron_tagger_eng')
+# # ------------------------------------------
+# # Downloads needed to process the text corpus in the assess_txt library 
+# nltk.download('punkt') # nltk word and sentence tokenizer models
+# nltk.download('averaged_perceptron_tagger') # syntactic category tagger for parts-of-speech
+# nltk.download('stopwords') # nltk corpus file containing common structural words
+# nltk.download('words') # nltk corpus file. contains ~236,000 english words\
+# nltk.download('punkt_tab')
+# nltk.download('averaged_perceptron_tagger_eng')
 # ------------------------------------------
 
 hdf5_dir = tk.filedialog.askdirectory(title = "Select Directory of HDF5")                           # Requests directory of the hdf5 files 
@@ -109,40 +108,6 @@ def text_data(name, obj):                                                       
         except Exception as e: 
              print(f'Failure in writing results to analytics :{name}\n ERROR: {e}')
 
-
-
- # Extracts embeddings from h5 file, converts them from a string to an array then creates a dataset ('s_embed_array') to save the embedding array to the h5 file 
-    # try: 
-    #     if isinstance(obj, h5py.Group) and 'segmentVectorEmbedding' in obj:                         # Filters through groups to find the 'segmentVectorEmbedding' to extract the embedding 
-    #                 seg_vec = obj['segmentVectorEmbedding']                                         # Sets a variable to the group which was filtered
-    #                 print(f"found 'segmentVectorEmbedding' in: {obj.name}")
-
-
-    #                 if 's_embedding' in seg_vec.attrs:                                              # Filters through the group attributes for the 's_embedding' attribute which contains the values of the embedding string 
-    #                     print(f"found 's_embedding' in: {obj.name}") 
-
-    #                     try: 
-    #                         embedding = seg_vec.attrs['s_embedding']                                # Sets a variable to the found attribute above
-    #                         values = [embedding.split(';')]                                         # Splits the embedding string (str) to a list 
-    #                         emb_arr = np.array(values,dtype=np.float32)                             # Turns the list to a numpy array to post it to the h5 file 
-
-    #                         if 's_embed_array' in seg_vec:                                          # Searches for 's_embed_array' in the group 
-    #                             del seg_vec['s_embed_array']                                        # If the name is in the group it deletes it, to ensure the dataset can be created 
-
-    #                         seg_vec.create_dataset('s_embed_array', data=emb_arr.T)                 # Creates a dataset in the group found at the top, named: 's_embed_array', the data is from the embedding array of all of the embedding values 
-    #                         print(f'saved sembedding to: {seg_vec.name}')
-
-    #                     except Exception as e: 
-    #                         print(e)
-    #                 else: 
-    #                     print(f"'s_embedding' NOT found in: {obj.name}") 
-        
-    #                 nest.append(values)                                                             # Adds the value of the embedding list to the overall list of embedding values 
-
-    # except Exception as e: 
-    #         print(f'Error in text_data processing: {e}')
-
-
               
 completed = []                                                                                      # Creates a empty list that can be used for a list of completed files 
 ext = ['.h5', '.hdf5' ]                                                                             # List of possible endings of hdf5 file to reduce error of reading files 
@@ -165,22 +130,6 @@ with open ('hdf5_map.txt', 'w') as m:                                           
         m.write(f'\n {items}')                                                                      # Writes every item from list to new line of the file
     print(f'-- File Written Successfully -- \n')                                                    # Print out stating the process is finished 
 m.close()                                                                                           # Closes texzt file 
-                                                                    
-# # Final 2D numpy array 
-
-# try: 
-#             embed_array = np.array(nest, dtype=np.float32)
-#             print(embed_array)
-#             shape = np.shape(embed_array)
-#             print(shape)
-
-# except Exception as e: 
-#             print(f'error converting to Numpy array: {e}')
-
-
-# # Running the embedding analysis on the 
-# assess_txt.sum_weighted_max_pooling(embed_array)
-# assess_txt.composite_embedding(embed_array)
 
 
 print(f'Processed Files: {completed} \n')                                                           # Prints completed list of all files processes 

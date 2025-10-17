@@ -1,0 +1,10 @@
+not finished with the csv file, but very close. currently have two dictionaries with one as an embedded dictionary for the analytics and another as the vlues from the segment ID. 
+
+these can be easily parsed together I just had to run to class. 
+
+
+I also have functions in the hdf5reader lib that will read out the analytics and the segment id in order so it can be used 
+
+also the two txt files in the folder have all of the values and dictionaries written out.
+
+- Bryce 
