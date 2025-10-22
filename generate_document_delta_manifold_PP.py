@@ -1259,7 +1259,7 @@ def main():
         fig = sankey_docs_left(
             tree,
             title="Documents → Arrangement Across a Collections Morphological Membership Refinement Hierarchy",
-            max_docs_left=0,                 # cap left-side nodes; set None for all docs
+            max_docs_left=None,                 # cap left-side nodes; set None for all doc ids, 0 for no doc ids
             save_html=html_save_path,
             open_browser=True,
             height_vh=96,          # try 96–98 for near full-screen

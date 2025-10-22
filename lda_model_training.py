@@ -27,25 +27,25 @@
 
 # -------------------------------------Includes------------------------------------------
 import gensim.downloader as api
-from gensim import corpora
-from gensim.models import LdaModel, CoherenceModel
-from gensim.models.ldamodel import print_topics
-from gensim.corpora import Dictionary, MmCorpus
-from gensim.parsing.preprocessing import preprocess_string, strip_punctuation, strip_numeric, remove_stopwords, strip_short
-from multiprocessing import freeze_support
 import matplotlib.pyplot as plt
-import pyLDAvis
-from pyLDAvis import gensim_models as gensimvis
 import tkinter as tk
-from tkinter import filedialog
+import pyLDAvis
 import os
 import sys
 import logging 
 import time 
 import random
+import threading
+from gensim import corpora
+from gensim.models import LdaModel, CoherenceModel
+from gensim.corpora import Dictionary, MmCorpus
+from gensim.parsing.preprocessing import preprocess_string, strip_punctuation, strip_numeric, remove_stopwords, strip_short
+from multiprocessing import freeze_support
+from tkinter import filedialog, ttk, messagebox
+from pyLDAvis import gensim_models as gensimvis
 
 ## -------------------------------Directories----------------------------------------##
-#If Corpus and Dictionary are premade they need to follow the naming convention and location dictated below 
+# #If Corpus and Dictionary are premade they need to follow the naming convention and location dictated below 
 model_dir = filedialog.askdirectory(title='Select Main Directory for Model Saving')
 dict_path =os.path.join(model_dir, "wiki_dict.dict")
 corpus_path =os.path.join(model_dir, "wiki_corpus.mm")
@@ -53,15 +53,17 @@ corpus_save_path = os.path.join(model_dir, "wiki_corpus.mm")
 os.chdir(model_dir)
 
 ## ---------------------------------Logging--------------------------------------------------## 
-start = time.time()
-logging.basicConfig(level=logging.INFO,format="%(asctime)s : %(levelname)s : %(message)s", datefmt='%m-%d %H:%M', filename=r'training.log', filemode='w')
-ch = logging.StreamHandler()
-ch.setLevel(logging.INFO) 
-formatter = logging.Formatter("%(asctime)s :%(levelname)s : %(message)s")
-ch.setFormatter(formatter)
-logging.getLogger('').addHandler(ch)
-log1 = logging.getLogger('myapp')
-logging.basicConfig(filename='training.log',format="%(asctime)s : %(levelname)s : %(message)s", filemode= 'w',  level=logging.INFO)
+
+def start_logging():
+    start = time.time()
+    logging.basicConfig(level=logging.INFO,format="%(asctime)s : %(levelname)s : %(message)s", datefmt='%m-%d %H:%M', filename=r'training.log', filemode='w')
+    ch = logging.StreamHandler()
+    ch.setLevel(logging.INFO) 
+    formatter = logging.Formatter("%(asctime)s :%(levelname)s : %(message)s")
+    ch.setFormatter(formatter)
+    logging.getLogger('').addHandler(ch)
+    log1 = logging.getLogger('myapp')
+    logging.basicConfig(filename='training.log',format="%(asctime)s : %(levelname)s : %(message)s", filemode= 'w',  level=logging.INFO)
 
 ## ----------------------------Tokenizing Filters----------------------------------##
 # Different filters for tokenizing text in the corpus, include more from gensim.parsing.preprocessing for stricter tokenization
@@ -72,7 +74,7 @@ remove_stopwords,
 strip_short
 ]
 
-## ---------------------------------LDA Parameters ---------------------------------##
+## ---------------------------------Training Parameters ---------------------------------##
 # Variables for the LDA model to be adjusted, currently being swept through the number of topics 
 # Other variables such as Chunk size and Passes can be swept through to compare models 
 
@@ -94,6 +96,7 @@ def build_corpus():
     wiki_corpus = api.load("wiki-english-20171001")
     dictionary =Dictionary()
     tokenized_texts = []
+    start = time.time()
 
     logging.info("Tokenizing and preprocessing Wikipedia articles...")
     for i, doc in enumerate(wiki_corpus):
@@ -118,7 +121,7 @@ def build_corpus():
 
 ##-------------------------------LDA Training----------------------------------##
 
-def main(item, final_path): 
+def train_model(item, final_path): 
     freeze_support()  
     logging.info(f"----------------------------[TRAINING] LDA model with {str(item)} Topics-----------------------------------") 
     lda_model = LdaModel(
@@ -201,7 +204,6 @@ def sample_corpus_streaming(corpus_path, sample_size=10000, seed=42):
     return reservoir
 
 ##---------------------------Running Functions----------------------------## 
-
 if __name__ == '__main__':  
     if not os.path.exists(model_dir): 
         logging.info('Invalid Model Directory')
@@ -218,13 +220,14 @@ if __name__ == '__main__':
     for item in n_topics: 
         final_path = os.path.join(model_dir, f'lda_{str(item)}.model')
         if not os.path.exists(final_path):
-            lda_model = main(item=item, final_path= final_path)
+            lda_model = train_model(item=item, final_path= final_path)
             end = time.time()
             logging.info(f'[TIME] Overall Time for LDA Training: {(end-start_lda) // 60,2}')
             eval(lda_model = lda_model, item=item, corpus_samp=sample_corpus)
             logging.info(f'[COMPLETE]Evaluation Complete{str(item)}')
 
         else:
+            start = time.time()
             lda_model = LdaModel.load(final_path)
             end = time.time()
             logging.info(f'[TIME] Overall Time for function: {round((end-start) // 60, 2)}')
