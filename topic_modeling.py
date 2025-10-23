@@ -45,7 +45,7 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.decomposition import NMF
 from sklearn.decomposition import PCA
 from sklearn.base import TransformerMixin
-from sklearn.cluster import AgglomerativeClustering
+from sklearn.cluster import AgglomerativeClustering, SpectralClustering
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.metrics import silhouette_score
 
@@ -387,7 +387,13 @@ def batched_encode(segments: list[str], batch_size: int = 2048, device: str | No
 #   between its clusters—the core object used to compare documents by the
 #   shapes and alignments of these morphisms.
 # -----------------------------------------------------------------------------
-def mk_delta_manifold(item_id, item_text, st_model):
+def mk_delta_manifold(
+    item_id,
+    item_text,
+    st_model,
+    cluster_method: str = "agglomerative",     # "agglomerative" | "spectral"
+    spectral_params: dict | None = None        # e.g., {"n_neighbors": 10, "assign_labels": "kmeans", "self_weight": 1.0}
+):
 
     # Load sentence transformer model
     #st_model = get_sentence_model()  # cached, single GPU model
@@ -456,8 +462,10 @@ def mk_delta_manifold(item_id, item_text, st_model):
         embeddings,
         k_min=3,
         k_max=10,
-        alpha=0.25,            # how much to reward balance (normalized entropy)
-        min_cluster_size=5     # penalize k that produces tiny clusters
+        alpha=0.25,            # reward balance (normalized entropy)
+        min_cluster_size=5,    # penalize tiny clusters
+        method: str = "agglomerative",
+        spectral_params: dict | None = None
     ):
         n = len(embeddings)
         if n <= 1: return 1
@@ -468,14 +476,18 @@ def mk_delta_manifold(item_id, item_text, st_model):
         best_k, best_score = None, -1e9
         for k in range(k_lo, k_hi + 1):
             try:
-                try:
-                    model = AgglomerativeClustering(n_clusters=k, linkage='average', metric='cosine')
-                except TypeError:
-                    model = AgglomerativeClustering(n_clusters=k, linkage='average', affinity='cosine')
-                labels = model.fit_predict(embeddings)
+                if method == "spectral":
+                    labels = _spectral_labels(embeddings, k, spectral_params)
+                else:
+                    try:
+                        model = AgglomerativeClustering(n_clusters=k, linkage='average', metric='cosine')
+                    except TypeError:  # older sklearn
+                        model = AgglomerativeClustering(n_clusters=k, linkage='average', affinity='cosine')
+                    labels = model.fit_predict(embeddings)
             except Exception:
                 continue
 
+            # Need at least 2 non-empty clusters for silhouette
             if len(set(labels)) < 2:
                 continue
 
@@ -485,7 +497,6 @@ def mk_delta_manifold(item_id, item_text, st_model):
                 s = -1.0
 
             H, f_max, counts = _cluster_balance_metrics(labels, k)
-            # small penalty for tiny clusters
             penalty = 0.10 * int((counts < min_cluster_size).sum())
             score = s + alpha * H - penalty
 
@@ -496,9 +507,10 @@ def mk_delta_manifold(item_id, item_text, st_model):
     # Summary: cluster_segments — agglomerative clustering with cosine distance
     #          (clamps degenerate cases, handles k==1 fast path).
     # Effect: provides coherent cluster assignments that anchor Δ endpoints.
-    def cluster_segments(embeddings, k):
+    def cluster_segments(embeddings, k, method: str = "agglomerative", spectral_params: dict | None = None):
         """
-        Cluster with Agglomerative, but clamp k into [1, n] and avoid sklearn if k==1.
+        Cluster segments. For k==1 return a single label; otherwise
+        use Agglomerative (cosine) or Spectral (cosine-affinity) per 'method'.
         """
         n = len(embeddings)
         if n == 0:
@@ -507,9 +519,12 @@ def mk_delta_manifold(item_id, item_text, st_model):
         k = int(max(1, min(k, n)))  # clamp
 
         if k == 1:
-            # single cluster label for all segments
             return np.zeros(n, dtype=int)
 
+        if method == "spectral":
+            return _spectral_labels(embeddings, k, spectral_params)
+
+        # default: agglomerative
         try:
             clustering = AgglomerativeClustering(n_clusters=k, linkage='complete', metric='cosine')
         except TypeError:
@@ -525,6 +540,65 @@ def mk_delta_manifold(item_id, item_text, st_model):
         H = -np.sum(p * np.log(p + eps)) / np.log(max(2, K))
         f_max = (counts.max() / max(1.0, counts.sum()))
         return float(H), float(f_max), counts.astype(int)
+
+    # ---- Spectral clustering helpers (cosine affinity, optional k-NN pruning) ----
+    def _build_cosine_affinity(E: np.ndarray, n_neighbors: int | None = 10, self_weight: float = 1.0) -> np.ndarray:
+        """
+        Build a nonnegative, symmetric cosine affinity matrix from L2-normalized embeddings.
+        If n_neighbors is set, keeps a symmetric k-NN graph to sharpen the spectrum.
+        """
+        # Cosine sim == dot for unit vectors
+        S = E @ E.T
+        # Clamp to [-1,1], then keep only nonnegative weights (common in spectral graph use)
+        S = np.clip(S, -1.0, 1.0)
+        S = np.maximum(S, 0.0)
+
+        n = S.shape[0]
+        if n_neighbors is not None and 0 < n_neighbors < max(1, n - 1):
+            A = np.zeros_like(S)
+            # keep top-k neighbors per row (exclude self)
+            order = np.argsort(S, axis=1)[:, ::-1]
+            for i in range(n):
+                tops = [j for j in order[i] if j != i][:n_neighbors]
+                if tops:
+                    A[i, tops] = S[i, tops]
+            # symmetrize (max to preserve any one-sided strong tie)
+            S = np.maximum(A, A.T)
+
+        # Diagonal strength
+        np.fill_diagonal(S, float(self_weight))
+        return S
+
+    def _spectral_labels(embeddings: np.ndarray, k: int, params: dict | None = None) -> np.ndarray:
+        """Run SpectralClustering with a precomputed cosine affinity; returns labels."""
+        n = len(embeddings)
+        if n == 0:
+            return np.array([], dtype=int)
+        if k <= 1:
+            return np.zeros(n, dtype=int)
+
+        p = params or {}
+        nn  = int(p.get("n_neighbors", 10))
+        lab = str(p.get("assign_labels", "kmeans"))
+        sw  = float(p.get("self_weight", 1.0))
+
+        A = _build_cosine_affinity(embeddings, n_neighbors=nn, self_weight=sw)
+        try:
+            model = SpectralClustering(
+                n_clusters=int(k),
+                affinity="precomputed",
+                assign_labels=lab,
+                random_state=0
+            )
+        except TypeError:
+            # older sklearn without random_state on SpectralClustering
+            model = SpectralClustering(
+                n_clusters=int(k),
+                affinity="precomputed",
+                assign_labels=lab
+            )
+        labels = model.fit_predict(A)
+        return labels.astype(int)
 
     def bisecting_kmeans_spherical(X, k, min_gain=0.01, random_state=0):
         # start with all points in one cluster; repeatedly split the largest
@@ -588,8 +662,19 @@ def mk_delta_manifold(item_id, item_text, st_model):
     #embeddings = batched_encode(segments, batch_size=2048)
     #embeddings = remove_top_components(embeddings, n=1)   # try n=1..3
     #k = choose_k_via_silhouette(embeddings)
-    k = choose_k_size_aware(embeddings, k_min=3, k_max=10, alpha=0.25, min_cluster_size=5)
-    labels = cluster_segments(embeddings, k)
+    k = choose_k_size_aware(
+        embeddings,
+        k_min=3, k_max=10,
+        alpha=0.25,
+        min_cluster_size=5,
+        method=cluster_method,                 
+        spectral_params=spectral_params        
+    )
+    labels = cluster_segments(
+        embeddings, k,
+        method=cluster_method,                 
+        spectral_params=spectral_params        
+    )
     #H, f_max, counts = _cluster_balance_metrics(labels, k)
     #if H < 0.55 or f_max > 0.85:
     #    labels = bisecting_kmeans_spherical(embeddings, k, min_gain=0.01, random_state=0)

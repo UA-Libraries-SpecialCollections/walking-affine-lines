@@ -97,9 +97,15 @@ from tkinter import Tk, ttk, filedialog, simpledialog, TclError, messagebox
 # ---- worker context & functions ----
 from concurrent.futures import ProcessPoolExecutor, as_completed
 
-_worker_ctx = {"LDA": None, "DICT": None, "NUM_TOPICS": None, "SBERT_M": None}
+_worker_ctx = {
+    "LDA": None, 
+    "DICT": None, 
+    "NUM_TOPICS": None, 
+    "SBERT_M": None, 
+    "CLUSTER_METHOD": None, 
+    "SPEC_PARAMS": None}
 
-def _init_worker(lda_path, dict_path, num_topics, device: str | None = None):
+def _init_worker(lda_path, dict_path, num_topics, cluster_method, spec_params, device: str | None = None):
     #Runs once in each worker.
     os.environ.setdefault("MPLBACKEND", "Agg")
     os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -111,13 +117,15 @@ def _init_worker(lda_path, dict_path, num_topics, device: str | None = None):
     _worker_ctx["DICT"] = Dictionary.load(dict_path)
     _worker_ctx["NUM_TOPICS"] = int(num_topics)
     _worker_ctx["SBERT_M"] = SentenceTransformer("all-MiniLM-L6-v2", device=device)
+    _worker_ctx["CLUSTER_METHOD"] = cluster_method
+    _worker_ctx["SPEC_PARAMS"] = spec_params
 
 def manifoldit(item_id, item_text):
     """Per-document build step (runs in workers)."""
     from topic_modeling import mk_delta_manifold, build_cluster_delta_matrix
 
     # Reuse the worker's cached model for this document
-    delta_matrix, cluster_order, labels, segments, embeddings, k = mk_delta_manifold(item_id, item_text, _worker_ctx["SBERT_M"])
+    delta_matrix, cluster_order, labels, segments, embeddings, k = mk_delta_manifold(item_id, item_text, _worker_ctx["SBERT_M"], _worker_ctx["CLUSTER_METHOD"], _worker_ctx["SPEC_PARAMS"])
 
     if k < 3 or len(set(labels)) < 3:
         # Not enough structure to form deltas; return a marker
@@ -567,8 +575,9 @@ def main():
         default_top_m_keywords=7,
         default_cos_threshold=0.50,
         default_srcdst_threshold=0.90,
-        default_endpoint="visualize",  # "visualize" | "analyze" | "arrange"
-        default_doc_id=None,           # optional analysis focus doc_id
+        default_endpoint="visualize",           # "visualize" | "analyze" | "arrange"
+        default_cluster_method="agglomerative", # "agglomerative" | "spectral"
+        default_doc_id=None,                    # optional analysis focus doc_id
         parent=None,
         verbose=False
     ):
@@ -658,6 +667,7 @@ def main():
             if verbose:
                 print("[prompt] Tk must run on the main thread; returning defaults.")
             return {
+                "cluster_method": default_cluster_method,
                 "mode": default_mode,
                 "num_topics": default_num_topics,
                 "top_n_topics": default_top_n_topics,
@@ -733,6 +743,19 @@ def main():
         rb_build.grid(row=0, column=0, sticky="w", padx=8, pady=4)
         rb_load.grid(row=1, column=0, sticky="w", padx=8, pady=4)
         rb_compare.grid(row=2, column=0, sticky="w", padx=8, pady=4)
+        
+        # --- Clustering ---
+        cluster_frame = ttk.LabelFrame(outer, text="Clustering")
+        cluster_frame.grid(row=row, column=0, sticky="ew", pady=(0, 10))
+        row += 1
+
+        cluster_var = tk.StringVar(value=default_cluster_method)
+        rb_agg   = ttk.Radiobutton(cluster_frame, text="Agglomerative", value="agglomerative",   variable=cluster_var)
+        rb_spec  = ttk.Radiobutton(cluster_frame, text="Spectral", value="spectral",    variable=cluster_var)
+
+        rb_agg.grid(row=0, column=0, sticky="w", padx=8, pady=4)
+        rb_spec.grid(row=1, column=0, sticky="w", padx=8, pady=4)
+
 
         # --- Parameters ---
         params = ttk.LabelFrame(outer, text="Parameters")
@@ -968,6 +991,7 @@ def main():
             # Gather result
             raw_doc_id = doc_id_var.get().strip()
             result["v"] = {
+                "cluster_method": cluster_var.get(),
                 "mode": mode,
                 "num_topics": v_num_topics,
                 "top_n_topics": v_top_n_topics,
@@ -1044,6 +1068,7 @@ def main():
         default_cos_threshold=0.50,
         default_srcdst_threshold=0.90,
         default_endpoint="visualize",
+        default_cluster_method="agglomerative",
         default_doc_id=None,
         parent=root,
         verbose=True
@@ -1060,7 +1085,8 @@ def main():
     srcdst_threshold = cfg["srcdst_threshold"]
     doc_id           = cfg["doc_id"]
     fpaths           = cfg["files"]
-
+    cluster_method   = cfg["cluster_method"]
+    
     lda_int_topics_list = load_topic_labels(fpaths["lda_labels"], expected_size=100)
 
 
@@ -1097,7 +1123,7 @@ def main():
         with ProcessPoolExecutor(
             max_workers=cpu_workers,
             initializer=_init_worker,
-            initargs=(fpaths["lda_model"], fpaths["lda_dict"], num_topics)  # keep "cpu" in workers
+            initargs=(fpaths["lda_model"], fpaths["lda_dict"], num_topics, cluster_method, {"n_neighbors": 10, "assign_labels": "kmeans", "self_weight": 1.0}) 
         ) as pool:
 
             futures = [
@@ -1165,7 +1191,7 @@ def main():
     if cfg["endpoint"] == "visualize":
         visualize_documents_with_directional_overlap(
             document_cluster_data=document_delta_dict,
-            lda_model=LdaModel_loaded,
+            lda_model=LdaModel.load(fpaths["lda_model"]),
             top_n_topics=top_n_topics,
             top_m_keywords=top_m_keywords,
             cos_threshold=cos_threshold,
