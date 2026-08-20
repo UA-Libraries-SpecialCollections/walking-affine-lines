@@ -72,7 +72,7 @@ def prefixit(string, prefix):
 
 
 def count_tokens(text, model):
-    encoding = tiktoken.encoding_for_model(model) # value for model at this point is 'gpt-3.5-turbo' also the encoding for gpt-4, gpt-3.5-turbo is "cl100k_base"
+    encoding = tiktoken.get_encoding(model) # value for model at this point is 'gpt-3.5-turbo' also the encoding for gpt-4, gpt-3.5-turbo is "cl100k_base"
     tokens_list = encoding.encode(text) # this yields a list object of numeric encodings that reference an identity authority file in chatgpt
     return len(tokens_list)
     

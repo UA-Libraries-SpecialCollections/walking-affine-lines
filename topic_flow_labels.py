@@ -1,39 +1,26 @@
-#!/usr/bin/python
-# Project hosted @ https://github.com/UA-Libraries-SpecialCollections/walking-affine-lines
-# Developed by the University of Alabama Libraries Digital Services unit
-# Funded by a 2025 University of Alabama Office of Economic Development FUSE Grant
-# Jeremiah Colonna-Romano 2025 jjcolonnaromano@ua.edu
 
-# ------------------------------------------------
-#topic_flow_labels.py
-#
-#Derive human-readable labels for hierarchy nodes based on *morphism-driven topic flow*.
-#
-#For each node (subset of docs), we:
-#  - Recompute intra-document morphism weights (magnitude + optional directional agreement)
-#  - For each morphism i->j, retrieve topic distributions (T_i, T_j)
-#  - Accumulate a weighted topic flow matrix F[u,v] ≈ sum_morphisms w * T_i[u] * T_j[v]
-#  - Score pairs by LIFT or PMI against marginals to surface characteristic transitions
-#  - Render labels using interpretive topic text (lda_int_topics_list) when available
-#
-#Outputs:
-#  - node_labels: dict[node_id] -> short label string (e.g., "Labor → Strike; Immigration → Policy")
-#  - node_details: dict[node_id] -> dict with full top pairs and stats
-#  - tree updated in place: each node gets 'label' and 'topic_flow' (top pairs) fields
-#
-#Works with:
-#  - document_delta_dict: dict[doc_id] -> (delta_matrix, cluster_order, labels,
-#                                         cluster_topic_distributions, cluster_embeddings, cluster_dirs)
-#  - tree: result of build_hierarchy_all(...)
+"""
+topic_flow_labels.py
 
-# ----------------------------------------
-# Disclaimer!
-# This software is provided "as-is" and without warranty of any kind, either express or implied, including, but not limited to, the implied warranties of merchantability and fitness for a particular purpose. Use of this software is at the user's own risk.
-# By using this software, users acknowledge that it provides access to third-party APIs, which might result in financial charges if those APIs are accessed and utilized. Users are solely responsible for any and all costs, charges, fees, or expenses incurred as a result of using, accessing, or invoking these third-party APIs through this software.
-# It is the user's responsibility to read and understand the terms of service, pricing details, and any other relevant information related to third-party APIs accessed through this software. The maintainers, contributors, and creators of this software shall not be held liable for any financial charges or damages that may arise from the use or misuse of these third-party APIs.
-# Users are also responsible for securing their API keys, credentials, and any other sensitive information related to these third-party services. The maintainers, contributors, and creators of this software shall not be held liable for any unauthorized access, data breaches, or other security incidents related to the use of these third-party APIs.
-# By using this software, the user agrees to indemnify, defend, and hold harmless the maintainers, contributors, and creators of this software from any and all claims, damages, losses, liabilities, costs, and expenses, including legal fees and expenses, arising out of or related to their use or misuse of the software and any third-party APIs accessed through it.
+Derive human-readable labels for hierarchy nodes based on *morphism-driven topic flow*.
 
+For each node (subset of docs), we:
+  - Recompute intra-document morphism weights (magnitude + optional directional agreement)
+  - For each morphism i->j, retrieve topic distributions (T_i, T_j)
+  - Accumulate a weighted topic flow matrix F[u,v] ≈ sum_morphisms w * T_i[u] * T_j[v]
+  - Score pairs by LIFT or PMI against marginals to surface characteristic transitions
+  - Render labels using interpretive topic text (lda_int_topics_list) when available
+
+Outputs:
+  - node_labels: dict[node_id] -> short label string (e.g., "Labor → Strike; Immigration → Policy")
+  - node_details: dict[node_id] -> dict with full top pairs and stats
+  - tree updated in place: each node gets 'label' and 'topic_flow' (top pairs) fields
+
+Works with:
+  - document_delta_dict: dict[doc_id] -> (delta_matrix, cluster_order, labels,
+                                         cluster_topic_distributions, cluster_embeddings, cluster_dirs)
+  - tree: result of build_hierarchy_all(...)
+"""
 
 from __future__ import annotations
 
@@ -42,15 +29,6 @@ import numpy as np
 import math
 from collections import defaultdict
 
-
-# -----------------------------------------------------------------------------
-# def _unit(x: np.ndarray, eps: float=1e-12) -> np.ndarray:
-# Summary: 
-#   Safely L2‑normalize a vector (returns zeros if near‑zero length).
-# Effect: All angle/cosine computations in morphism weighting depend on unit
-#      directions; this guard prevents numerical blow‑ups when a vector has
-#      negligible norm.
-# -----------------------------------------------------------------------------
 def _unit(x: np.ndarray, eps: float=1e-12) -> np.ndarray:
     x = np.asarray(x, dtype=float)
     n = float(np.linalg.norm(x))
@@ -58,18 +36,6 @@ def _unit(x: np.ndarray, eps: float=1e-12) -> np.ndarray:
         return np.zeros_like(x, dtype=float)
     return x / n
 
-# ----------------------------------------------------------------------------
-# def _align_signs_to_flow(v: np.ndarray, s: np.ndarray, t: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
-# Summary: 
-#   Canonicalize the ambiguous signs of per‑cluster PC1 directions
-#   relative to the morphism’s flow direction v.
-#   Given (v, s, t) where s=PC1(src), t=PC1(dst), it flips s to
-#   point WITH v and flips t to point AGAINST v when needed.
-# Effect: 
-#   PCA sign is arbitrary. Aligning s/t to the edge direction
-#   makes source/destination alignment comparable across docs,
-#   stabilizing directional weights and the topic‑flow signal.
-# -----------------------------------------------------------------------------
 def _align_signs_to_flow(v: np.ndarray, s: np.ndarray, t: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     s2 = np.copy(s)
     t2 = np.copy(t)
@@ -77,50 +43,11 @@ def _align_signs_to_flow(v: np.ndarray, s: np.ndarray, t: np.ndarray) -> Tuple[n
     if np.dot(t2, -v) < 0: t2 = -t2
     return v, s2, t2
 
-# ----------------------------------------------------------------------------
-# def _topic_name(idx: int, topic_labels: Optional[List[str]]) -> str:
-# Summary: 
-#   Map a topic index to a human‑readable label if provided; else fall
-#   back to 'topic_<idx>'. Used only for rendering labels.
-# -----------------------------------------------------------------------------
 def _topic_name(idx: int, topic_labels: Optional[List[str]]) -> str:
     if topic_labels is not None and 0 <= idx < len(topic_labels):
         return str(topic_labels[idx])
     return f"topic_{idx}"
 
-# -----------------------------------------------------------------------------
-# def _compute_morphism_edges_for_docs
-# Summary: 
-#   Build a flat, weighted list of intra‑document morphism edges across
-#   a set of documents. Each edge is i→j within a document and carries
-#   a weight 'w' that encodes both delta magnitude and (optionally)
-#   directional agreement.
-# Effect:
-#   • For each doc, iterate all ordered cluster pairs (i≠j).
-#   • Base weight = exp(−‖Δ[i,j]‖ / scale). If 'weight_scale' is not given,
-#     a robust per‑doc scale is estimated from the median of a sample of delta
-#     norms so that lengths are comparable without being dominated by outliers.
-#   • Directional weighting (when cluster principal directions are present):
-#       v = unit(Δ[i,j]); s = unit(PC1_i); t = unit(PC1_j); optionally align
-#       signs so s points with v and t against v. The agreement terms are:
-#         a1 = max(0, ⟨v, s⟩)              (how src points along the flow)
-#         a2 = max(0, ⟨−v, t⟩)             (how dst receives the flow)
-#         a3 = |⟨s, t⟩|                     (how consistent src/dst axes are)
-#       dir_score = a1 * a2 * sqrt(a3); final weight = base * dir_score^β
-#     'dir_weight_beta' controls how strongly directionality shapes the weights.
-#   • Optionally cap to the top‑K edges per doc by weight to keep computation
-#     tractable.
-# Output: A list of dicts like
-#     {'doc_id','i','j','w','src_label','dst_label'}
-#
-# !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-#   These weights quantify which within‑doc transformations
-#   (morphisms) are most semantically coherent and therefore most informative
-#   for cross‑doc structure. They are the measure that drives topic‑flow and
-#   ultimately the labels shown on hierarchy nodes.
-# !!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
-#
-# -----------------------------------------------------------------------------
 def _compute_morphism_edges_for_docs(
     document_delta_dict: Dict[str, tuple],
     doc_ids: List[str],
@@ -135,7 +62,8 @@ def _compute_morphism_edges_for_docs(
     """
     edges: List[dict] = []
     for doc_id in doc_ids:
-        (Delta, cluster_order, seg_labels, topic_dists, E, Dirs) = document_delta_dict[doc_id]
+        # Accept both legacy 6-tuples and quality-extended 7-tuples.
+        (Delta, cluster_order, seg_labels, topic_dists, E, Dirs) = document_delta_dict[doc_id][:6]
         Delta = np.asarray(Delta); E = np.asarray(E); D = np.asarray(Dirs)
         n = Delta.shape[0]
         # weight scale per doc (median of norms) if not provided
@@ -187,23 +115,6 @@ def _compute_morphism_edges_for_docs(
             })
     return edges
 
-
-# -----------------------------------------------------------------------------
-# def _topic_flow_from_edges
-# Summary: 
-#   Aggregate a global topic‑transition matrix F[u,v] from the weighted
-#   morphism edges.
-# Effect:
-#   • For each edge i→j with weight w, fetch the topic distributions T_i and T_j
-#     for the source/destination clusters (per‑doc).
-#   • To keep the signal sparse and readable, restrict to the top‑k topics on
-#     each side; renormalize those slices; then add w * (T_i⊗T_j) into F using
-#     only those indices.
-#
-#   F encodes how topics tend to move from source → destination
-#   across the morphisms that define your manifold. It turns many local edges
-#   into a compact, interpretable summary of “topic flow” for any subset of docs.
-# -----------------------------------------------------------------------------
 def _topic_flow_from_edges(
     edges: List[dict],
     topic_dists_by_label: Dict[int, np.ndarray],
@@ -233,24 +144,6 @@ def _topic_flow_from_edges(
         F[np.ix_(src_idx, dst_idx)] += e["w"] * (s[:,None] * t[None,:])
     return F
 
-
-# ----------------------------------------------------------------------------
-# def _top_pairs_from_flow
-# Summary: 
-#   Score and extract the most characteristic topic transitions (u→v)
-#   from a flow matrix F.
-# Effect:
-#   • Compute P = F / sum(F). Then select a scoring scheme:
-#       - 'mass' : just P[u,v] (frequency of the pair).
-#       - 'lift' : P[u,v] / (P[u,*]·P[*,v]) → highlights transitions that occur
-#                  more often than expected from marginals (good for labels).
-#       - 'pmi'  : log P[u,v] − log P[u,*] − log P[*,v] (pointwise mutual info).
-#   • Return the top 'top_pairs' (u,v,score) entries (diagonals allowed).
-#
-#     Lift/PMI favor distinctive transitions over merely common
-#     ones, producing concise labels that capture *what’s special* about a node,
-#     not just what’s frequent.
-# -----------------------------------------------------------------------------
 def _top_pairs_from_flow(
     F: np.ndarray,
     top_pairs: int = 4,
@@ -282,18 +175,6 @@ def _top_pairs_from_flow(
         pairs.append((int(u), int(v), float(S[u,v])))
     return pairs
 
-
-# ----------------------------------------------------------------------------
-# def _render_label
-# Summary: 
-#   Turn the selected (topic_u, topic_v) pairs into a short, human‑readable
-#   label like “Labor → Strike; Immigration → Policy”, optionally using
-#   supplied topic names.
-# Effect: 
-#   Formats up to three pairs and truncates to keep labels legible on
-#   plots. These labels make the morphism‑driven structure immediately
-#   interpretable to humans.
-# -----------------------------------------------------------------------------
 def _render_label(
     pairs: List[Tuple[int,int,float]],
     topic_labels: Optional[List[str]] = None,
@@ -310,34 +191,6 @@ def _render_label(
         s = s[:max_len-1] + "…"
     return s
 
-
-# ----------------------------------------------------------------------------
-# def annotate_tree_with_topic_flow 
-# Summary: 
-#   Given the hierarchy produced by morphism‑shape clustering, compute a
-#   topic‑flow label for every node and attach both the short label and
-#   the underlying data to the node.
-# Effect:
-#   1) For each node, collect its member docs and build the weighted edge set
-#      via _compute_morphism_edges_for_docs (using the same directionality
-#      conventions as elsewhere).
-#   2) Merge the per‑doc cluster topic distributions into a local lookup table
-#      (labels are doc‑local, but edges reference the correct ones).
-#   3) Build F with _topic_flow_from_edges and extract top (u→v) pairs using
-#      _top_pairs_from_flow (default score='lift').
-#   4) Render a short string with _render_label and write it to node['label'];
-#      also attach a compact 'topic_flow' payload (pairs, num_topics, shape).
-#
-#   This is the final interpretability bridge. It transforms
-#   low‑level morphism geometry into semantically meaningful, human‑readable
-#   labels that explain *why* a cluster of documents hangs together at each
-#   level of the hierarchy.
-#
-#   'dir_weight_beta' lets you keep the labeling consistent with whatever
-#     morphism weighting you used to form the hierarchy.
-#   'top_topic_k' sparsifies F for clarity; 'top_pairs' controls label size.
-#   'max_edges_per_doc' keeps large corpora tractable by pruning candidates.
-# -----------------------------------------------------------------------------
 def annotate_tree_with_topic_flow(
     document_delta_dict: Dict[str, tuple],
     tree: Dict[str, Any],

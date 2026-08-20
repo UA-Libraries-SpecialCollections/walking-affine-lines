@@ -1,9 +1,11 @@
 /__pycache__
+/AS_test_data
 /alto_xml
 /alto_xml_transform.py
 /alto_xml_transform_multipage.py
 /assess_text
 /backrooms
+/complete_hdf5_files
 /enviroments
 /hdf5_files
 /hdf5reader
@@ -23,14 +25,17 @@
 /ocr_shelf_4_utf16
 /ocr_utf16
 /output
+/presentation_materials
 /req_emb
 /Project workflow software description.xlsx
 /u0002_0000007.range_48_shelf_1_ALTO
 /u0002_0000007.range_48_shelf_1_jpeg_clippings
 /u0002_0000007.range_48_shelf_1_xml_skeletons
+/u0002_0000007.range_48_shelf_1_xml_skeletons _BERT
 /u0002_0000007.range_48_shelf_4_ALTO
 /u0002_0000007.range_48_shelf_4_jpeg_clippings
 /u0002_0000007.range_48_shelf_4_xml_skeletons
+/u0002_0000007.range_48_shelf_4_xml_skeletons_BERT
 /working
 /xml_testin
 /~$Project workflow software description.xlsx

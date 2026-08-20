@@ -28,6 +28,7 @@ from tkinter import filedialog
 from scipy.stats import entropy
 from scipy.spatial.distance import cosine, jensenshannon
 from multiprocessing import freeze_support
+from tkinter import filedialog, Tk, simpledialog
 
 logging.basicConfig(level=logging.INFO,format="%(asctime)s : %(levelname)s : %(message)s", datefmt='%m-%d %H:%M', filename=r'S:\Digital Projects\Encoding\testing\lda_testing_evaluationtraining.log', filemode='w')
 ch = logging.StreamHandler()
@@ -62,7 +63,7 @@ def doc_score(text, lda, dictionary):
     gini = 1 - np.sum(dist**2)
     num_eff_top = 1 / np.sum(dist**2)
     div = topic_diversity(lda)
-    coh_cv = CoherenceModel(model=lda, texts=[tokens], dictionary=dictionary , coherence='c_v').get_coherence()
+    # coh_cv = CoherenceModel(model=lda, texts=[tokens], dictionary=dictionary , coherence='c_v').get_coherence()
     coh_umass = CoherenceModel(model=lda, texts=[tokens], dictionary=dictionary, coherence='u_mass').get_coherence()
     dominance = topic_prob.max()
     kl_div = kl_divergence(topic_prob, np.ones(len(topic_prob))/len(topic_prob))
@@ -73,7 +74,6 @@ def doc_score(text, lda, dictionary):
         "kl_diver": kl_div,
         "log_perplexity": perplexity,
         "topic_distribution": topic_prob, 
-        'coherence_cv': coh_cv, 
         'coherence_umas': coh_umass, 
         'entropy': entro, 
         'max prob': max_prob, 
@@ -83,66 +83,56 @@ def doc_score(text, lda, dictionary):
         'dist': dist
     }
 
-
-def main (text_path): 
+def main (): 
+    root = Tk()
+    root.withdraw() 
+    directory = filedialog.askdirectory(title='Select Directory for Model, Corpus, Dictionary')
+    n_top = simpledialog.askinteger(title= 'Number of Topics', prompt='Enter the number of topics the model was trained on')
+    text_path = filedialog.askdirectory(title='Select a directory of text files to run evaluation on corpus')
+    root.destroy()
+    os.chdir(directory)
+    model_dir = os.path.join(directory, f'lda_{n_top}.model')
+    dict_dir = os.path.join(directory, 'wiki_dict.dict') 
+    csv_dir = os.path.join(directory, 'csv_save')
+    save = os.path.join(csv_dir,'model_eval.csv')
+    if not os.path.exists(csv_dir): 
+        os.mkdir(csv_dir)    
+     
+    lda = LdaModel.load(model_dir)
+    dictionary = Dictionary.load(dict_dir)
     for file in os.scandir(text_path): 
-        with open(file.path, 'r', encoding='utf-8') as text: 
-            doc_text = text.read() 
-            analysis = doc_score(doc_text, lda, dictionary)
-            logging.info(analysis)
-            results = {
-                    "Model": f"{model_type}", 
-                    'Text_Name': file.name, 
-                    'Dominant Topic Probability': analysis['dominance'],
-                    'KL Divergence': analysis['kl_diver'], 
-                    'Perplexity': analysis['log_perplexity'], 
-                    'Coherence u_mass': analysis['coherence_umas'], 
-                    'Coherence c_v': analysis['coherence_cv'], 
-                    'Entropy': analysis['entropy'], 
-                    'Max Topic Prob': analysis['max prob'], 
-                    'Gini Index': analysis['gini'], 
-                    'Num Effective Topic': analysis['num_eff_topics'], 
-                    'Topic Diversity': analysis['diversity']
-                }
-            for i, prob in enumerate(analysis['dist']): 
-                results[f'Topic_{i}'] = prob
+            with open(file.path, 'r', encoding='utf-8') as text: 
+                doc_text = text.read() 
+                analysis = doc_score(doc_text, lda, dictionary)
+                logging.info(analysis)
+                results = { 
+                        'Text_Name': file.name, 
+                        'Dominant Topic Probability': analysis['dominance'],
+                        'KL Divergence': analysis['kl_diver'], 
+                        'Perplexity': analysis['log_perplexity'], 
+                        'Coherence u_mass': analysis['coherence_umas'], 
+                        'Entropy': analysis['entropy'], 
+                        'Max Topic Prob': analysis['max prob'], 
+                        'Gini Index': analysis['gini'], 
+                        'Num Effective Topic': analysis['num_eff_topics'], 
+                        'Topic Diversity': analysis['diversity']
+                    }
+                for i, prob in enumerate(analysis['dist']): 
+                    results[f'Topic_{i}'] = prob
 
-            df = pd.DataFrame([results])
-            if os.path.exists(save): 
-                df.to_csv(save, index=False, mode='a', header=False)
-                logging.info(f'Saved CSV with LDA model analysis of {file.name}')
+                df = pd.DataFrame([results])
+                if os.path.exists(save): 
+                    df.to_csv(save, index=False, mode='a', header=False)
+                    logging.info(f'Saved CSV with LDA model analysis of {file.name}')
 
-            else: 
-                df.to_csv(save, index=False, mode='w',header=True)
-                logging.info(f'Saved CSV with LDA model analysis of {file.name}')
+                else: 
+                    df.to_csv(save, index=False, mode='w',header=True)
+                    logging.info(f'Saved CSV with LDA model analysis of {file.name}')
+ 
 
-
-x = [5,7,10,15]
-y = [7]
-for i in x: 
-    for ii in y: 
-        model_title = f'lda_{i}.model'
-        model_type = f'{i} topics\\run {ii}'
-        logging.info(f'Running {model_title} in {model_type}')
-        model_dir = fr"S:\Digital Projects\Encoding\testing\lda_testing_evaluation\{model_type}"
-        # model_dir = r'S:\Digital Projects\Encoding\testing\lda_wiki_models'
-        # working_dir = r'S:\Digital Projects\Encoding\testing\lda_testing_evaluation'
-        lda_dir = os.path.join(model_dir,model_title)
-        dic_path = os.path.join(model_dir, "ndnp_dictionary.dict")
-        # dic_path = r"S:\Digital Projects\Encoding\testing\lda_wiki_models\wiki_dict.dict"
-        text_path = r'S:\Digital Projects\Encoding\testing\lda_testing_evaluation\new_text'
-        csv_save = r'S:\Digital Projects\Encoding\testing\lda_testing_evaluation'
-        save = os.path.join(csv_save,'NDNP_Model_eval.csv')
-        os.chdir(model_dir)
-
-
-
-        lda = LdaModel.load(lda_dir)
-        dictionary = Dictionary.load(dic_path)
-
-        if __name__ == '__main__':
-                    freeze_support()
-                    main(text_path=text_path) 
+if __name__ == '__main__':
+    freeze_support()
+    main() 
 
 
 

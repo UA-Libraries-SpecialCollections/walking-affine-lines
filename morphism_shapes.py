@@ -1,57 +1,38 @@
-#!/usr/bin/python
-# Project hosted @ https://github.com/UA-Libraries-SpecialCollections/walking-affine-lines
-# Developed by the University of Alabama Libraries Digital Services unit
-# Funded by a 2025 University of Alabama Office of Economic Development FUSE Grant
-# Jeremiah Colonna-Romano 2025 jjcolonnaromano@ua.edu
 
-# -----------------------------------
-#morphism_shapes.py
-#   This module turns every intra‑document cluster morphism (i→j) into a
-#   compact, rotation‑stable “shape” vector built from the delta direction (v)
-#   and the principal directions of the source/destination clusters (s,t).
-#   It then clusters these shapes across the corpus and aggregates them to
-#   document‑level memberships, with an optional multi‑level split based on
-#   membership heterogeneity. These pieces support the project goal of
-#   organizing documents by *semantic morphisms* rather than only by topics.
-#
-# "Zig-zag" morphism-shape arrangement
-#
-# Treat each intra-document pairwise cluster morphism as a 3-part shape:
-#    v = unit(delta_ij)                 (transform direction)
-#    s = unit(PC1(src))                 (source PC1 direction)
-#    t = unit(PC1(dst))                 (destination PC1 direction)
-#
-# We canonicalize the signs relative to the flow so comparisons are meaningful
-# across the collection, and build a compact, rotation-stable feature vector
-# for each morphism's "shape". Then we cluster these shapes across the entire
-# corpus and form document-level arrangements by membership over these shape clusters.
-#
-# Main APIs
-# ---------
-# - extract_shapes_from_cdm_dict(document_delta_dict, ...)
-#     -> returns shapes_df (one row per morphism) and feature matrix X
-# - cluster_shapes(X, k=64, method='kmeans', random_state=0)
-#     -> returns labels (len = #morphisms), centroids
-# - doc_membership(shapes_df, labels, weight_mode='weighted', normalize=True)
-#     -> returns doc-by-shape membership matrix (dict or np.ndarray) and an index map
-# - build_hierarchy(document_delta_dict, depth=2, shape_k=64, doc_k=8, ...)
-#     -> recursively refines shape clusters within doc clusters
-#
-# Notes
-# -----
-# - "Rotation-stable": we use pairwise cosines between (v,s,t): [cos(v,s), cos(-v,t), cos(s,t)],
-#     which are invariant to any global rotation (Gram matrix entries). To retain optional *global*
-#     directionality, we also support coarse spherical binning of v (add one-hot of v-bin).
-# - We allow weighting each morphism by flow-consistent alignment and by delta magnitude.
+"""
+morphism_shapes.py
 
-# ----------------------------------------
-# Disclaimer!
-# This software is provided "as-is" and without warranty of any kind, either express or implied, including, but not limited to, the implied warranties of merchantability and fitness for a particular purpose. Use of this software is at the user's own risk.
-# By using this software, users acknowledge that it provides access to third-party APIs, which might result in financial charges if those APIs are accessed and utilized. Users are solely responsible for any and all costs, charges, fees, or expenses incurred as a result of using, accessing, or invoking these third-party APIs through this software.
-# It is the user's responsibility to read and understand the terms of service, pricing details, and any other relevant information related to third-party APIs accessed through this software. The maintainers, contributors, and creators of this software shall not be held liable for any financial charges or damages that may arise from the use or misuse of these third-party APIs.
-# Users are also responsible for securing their API keys, credentials, and any other sensitive information related to these third-party services. The maintainers, contributors, and creators of this software shall not be held liable for any unauthorized access, data breaches, or other security incidents related to the use of these third-party APIs.
-# By using this software, the user agrees to indemnify, defend, and hold harmless the maintainers, contributors, and creators of this software from any and all claims, damages, losses, liabilities, costs, and expenses, including legal fees and expenses, arising out of or related to their use or misuse of the software and any third-party APIs accessed through it.
+"Zig-zag" morphism-shape arrangement
+------------------------------------
 
+Treat each intra-document pairwise cluster morphism as a 3-part shape:
+   v = unit(delta_ij)                 (transform direction)
+   s = unit(PC1(src))                 (source PC1 direction)
+   t = unit(PC1(dst))                 (destination PC1 direction)
+
+We canonicalize the signs relative to the flow so comparisons are meaningful
+across the collection, and build a compact, rotation-stable feature vector
+for each morphism's "shape". Then we cluster these shapes across the entire
+corpus and form document-level arrangements by membership over these shape clusters.
+
+Main APIs
+---------
+- extract_shapes_from_cdm_dict(document_delta_dict, ...)
+    -> returns shapes_df (one row per morphism) and feature matrix X
+- cluster_shapes(X, k=64, method='kmeans', random_state=0)
+    -> returns labels (len = #morphisms), centroids
+- doc_membership(shapes_df, labels, weight_mode='weighted', normalize=True)
+    -> returns doc-by-shape membership matrix (dict or np.ndarray) and an index map
+- build_hierarchy(document_delta_dict, depth=2, shape_k=64, doc_k=8, ...)
+    -> recursively refines shape clusters within doc clusters
+
+Notes
+-----
+- "Rotation-stable": we use pairwise cosines between (v,s,t): [cos(v,s), cos(-v,t), cos(s,t)],
+  which are invariant to any global rotation (Gram matrix entries). To retain optional *global*
+  directionality, we also support coarse spherical binning of v (add one-hot of v-bin).
+- We allow weighting each morphism by flow-consistent alignment and by delta magnitude.
+"""
 
 from __future__ import annotations
 
@@ -65,16 +46,6 @@ import math
 # Helpers
 # ------------------------
 
-# -----------------------------------------------------------------------------
-# def _unit(x: np.ndarray, eps: float = 1e-12) -> np.ndarray
-# Summary:
-#   Normalize any vector to unit length; if its norm is < eps, return a like‑shaped
-#   zero vector. All downstream cosine features assume unit vectors.
-# Effect:
-#   Ensures the “shape” features are scale‑free: comparisons depend on angles
-#   between directions, not on cluster magnitude. This stabilizes morphism
-#   geometry across documents with different embedding spreads.
-# -----------------------------------------------------------------------------
 def _unit(x: np.ndarray, eps: float=1e-12) -> np.ndarray:
     x = np.asarray(x, dtype=float)
     n = float(np.linalg.norm(x))
@@ -82,28 +53,9 @@ def _unit(x: np.ndarray, eps: float=1e-12) -> np.ndarray:
         return np.zeros_like(x, dtype=float)
     return x / n
 
-# -----------------------------------------------------------------------------
-# def _cos(a: np.ndarray, b: np.ndarray) -> float
-# Summary:
-#   Cosine similarity with small‑epsilon denominators to avoid division by zero.
-# Effect:
-#   Cosines are the backbone of the rotation‑stable Gram features used to describe
-#   a morphism’s shape (e.g., ⟨v,s⟩, ⟨−v,t⟩, ⟨s,t⟩). A robust cosine keeps those
-#   features well‑defined even for near‑degenerate inputs.
-# -----------------------------------------------------------------------------
 def _cos(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.dot(a, b) / (np.linalg.norm(a)+1e-12) / (np.linalg.norm(b)+1e-12))
 
-# -----------------------------------------------------------------------------
-# def _align_signs_to_flow(v: np.ndarray, s: np.ndarray, t: np.ndarray)
-# Summary:
-#   PC1 directions are sign‑ambiguous. This routine flips s so it points with v,
-#   and flips t so it points against v. Returns (v, s_aligned, t_aligned).
-# Effect:
-#   Canonicalizing signs makes shape features comparable across documents: a
-#   source PC1 that actually aligns with the transform direction means the same
-#   thing everywhere, which is crucial when clustering shapes globally.
-# -----------------------------------------------------------------------------
 def _align_signs_to_flow(v: np.ndarray, s: np.ndarray, t: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
     """Align ambiguous PC1 signs relative to flow direction v.
     Make s point with v, and t point against v.
@@ -114,17 +66,6 @@ def _align_signs_to_flow(v: np.ndarray, s: np.ndarray, t: np.ndarray) -> Tuple[n
     if np.dot(t2, -v) < 0: t2 = -t2
     return v, s2, t2
 
-# -----------------------------------------------------------------------------
-# def _spherical_bin(v: np.ndarray, n_az: int = 12, n_el: int = 6) -> int
-# Summary:
-#   Coarse bins a 3D unit direction into azimuth/elevation cells; if v has >3
-#   dims, project to the first three before binning.
-# Effect:
-#   The core Gram features are rotation‑invariant; adding a coarse bin of v lets
-#   you optionally retain *global* orientation (up/down/around) so the model can
-#   distinguish otherwise equivalent local shapes when that directionality is
-#   meaningful for interpretation.
-# -----------------------------------------------------------------------------
 def _spherical_bin(v: np.ndarray, n_az: int=12, n_el: int=6) -> int:
     """Coarse bin of a 3D direction. If dim!=3, project to first 3 dims and renormalize.
     Returns an integer bin id in [0, n_az*n_el). Bins: azimuth in [0, 2pi), elevation in [-pi/2, pi/2].
@@ -147,29 +88,6 @@ def _spherical_bin(v: np.ndarray, n_az: int=12, n_el: int=6) -> int:
 # Featureization
 # ------------------------
 
-# -----------------------------------------------------------------------------
-# def extract_shapes_from_cdm_tuple(... ) -> Tuple[List[dict], np.ndarray]
-# Summary:
-#   For one document’s 6‑tuple (Δ, order, labels, topic_dists, embeddings, dirs):
-#     1) Robustly estimate a weight_scale (median Δ norms) if not provided.
-#     2) Iterate all i→j pairs, computing:
-#        - v = unit(Δ[i,j]), s = unit(PC1[i]), t = unit(PC1[j]); optionally align signs.
-#        - A magnitude‑based base weight w = exp(−||Δ|| / scale).
-#        - Optional directional reweighting: w *= (a1 * a2 * sqrt(a3))^β where
-#          a1 = ⟨v,s⟩⁺, a2 = ⟨−v,t⟩⁺, a3 = |⟨s,t⟩|, and β = dir_weight_beta.
-#        - Core Gram features: [⟨v,s⟩, ⟨−v,t⟩, ⟨s,t⟩]; optionally add log‖Δ‖ and
-#          a one‑hot spherical bin of v.
-#     3) Keep only candidates with w ≥ min_weight; if max_edges_per_doc is set,
-#        retain the top‑K by weight.
-#     4) Return a list of row dicts (metadata per morphism) and the feature
-#        matrix X (rows aligned to those morphisms).
-# Effect:
-#   Converts raw intra‑doc deltas into *rotation‑stable* shape descriptors that
-#   encode how change (v) couples to each cluster’s internal axis (s,t). The
-#   weighting scheme privileges morphisms that are both substantial in length
-#   and *flow‑consistent* with cluster structure, making downstream clustering
-#   focus on semantically meaningful transitions rather than noise.
-# -----------------------------------------------------------------------------
 def extract_shapes_from_cdm_tuple(
     doc_id: str,
     cdm_tuple: tuple,
@@ -192,8 +110,10 @@ def extract_shapes_from_cdm_tuple(
     X : np.ndarray of features (n_edges x d), using columns:
          [cos_vs, cos_vt_in, cos_st, log_len?] + one-hot(vbin)?
     """
+    # Accept both legacy 6-tuples and quality-extended 7-tuples.
     (delta_matrix, cluster_order, seg_labels, cluster_topic_distributions,
-     cluster_embeddings, cluster_dirs) = cdm_tuple
+     cluster_embeddings, cluster_dirs) = cdm_tuple[:6]
+    cluster_quality = cdm_tuple[6] if isinstance(cdm_tuple, (tuple, list)) and len(cdm_tuple) >= 7 else None
 
     Delta = np.asarray(delta_matrix)
     E = np.asarray(cluster_embeddings)
@@ -271,31 +191,44 @@ def extract_shapes_from_cdm_tuple(
             oh[vbin] = 1.0
             feat.extend(oh)
 
+        src_label = int(cluster_order[i]) if not isinstance(cluster_order, list) else int(cluster_order[i])
+        dst_label = int(cluster_order[j]) if not isinstance(cluster_order, list) else int(cluster_order[j])
+
+        def _q_for(label):
+            if isinstance(cluster_quality, dict):
+                val = cluster_quality.get(label, cluster_quality.get(int(label), 1.0))
+                if isinstance(val, dict):
+                    val = val.get("quality", 1.0)
+                try:
+                    return float(max(0.0, min(1.0, val)))
+                except Exception:
+                    return 1.0
+            return 1.0
+
+        q_src = _q_for(src_label)
+        q_dst = _q_for(dst_label)
+        q_edge = min(q_src, q_dst)
+
         rows.append({
             "doc_id": str(doc_id),
-            "src_label": int(cluster_order[i]) if not isinstance(cluster_order, list) else int(cluster_order[i]),
-            "dst_label": int(cluster_order[j]) if not isinstance(cluster_order, list) else int(cluster_order[j]),
+            "src_label": src_label,
+            "dst_label": dst_label,
             "w": float(w),
             "len_delta": float(ln),
             "cos_vs": cos_vs,
             "cos_vt_in": cos_vt_in,
             "cos_st": cos_st,
-            "vbin": vbin
+            "vbin": vbin,
+            "src_quality": float(q_src),
+            "dst_quality": float(q_dst),
+            "edge_quality": float(q_edge),
         })
         feats.append(feat)
 
     X = np.asarray(feats, dtype=float) if feats else np.zeros((0, 3 + (1 if include_length else 0) + nbins), dtype=float)
     return rows, X
 
-# -----------------------------------------------------------------------------
-# def extract_shapes_from_cdm_dict(document_delta_dict: Dict[str, tuple], **kwargs)
-# Summary:
-#   Batch version over a dict of document 6‑tuples. Concatenates per‑doc rows
-#   and vertically stacks feature matrices X to X_all.
-# Effect:
-#   Provides a unified morphism‑shape corpus so that shape clustering is learned
-#   across the whole collection, enabling cross‑document regularities to emerge.
-# -----------------------------------------------------------------------------
+
 def extract_shapes_from_cdm_dict(
     document_delta_dict: Dict[str, tuple],
     **kwargs
@@ -316,15 +249,6 @@ def extract_shapes_from_cdm_dict(
 # Clustering (shapes)
 # ------------------------
 
-# -----------------------------------------------------------------------------
-# def _kmeans_np(X: np.ndarray, k: int, n_iter: int = 30, random_state: int = 0)
-# Summary:
-#   Pure‑NumPy k‑means with k‑means++ initialization and guards for empty
-#   clusters; reseeds empties uniformly. Returns (labels, centroids).
-# Effect:
-#   Keeps the pipeline dependency‑light and deterministic, while providing a
-#   robust baseline to cluster morphism shapes into recurring “types.”
-# -----------------------------------------------------------------------------
 def _kmeans_np(X: np.ndarray, k: int, n_iter: int = 30, random_state: int = 0) -> Tuple[np.ndarray, np.ndarray]:
     """Simple numpy k-means with k-means++ init (robust to degenerate cases). Returns (labels, centroids)."""
     rng = np.random.default_rng(random_state)
@@ -396,16 +320,6 @@ def _kmeans_np(X: np.ndarray, k: int, n_iter: int = 30, random_state: int = 0) -
     return labels, centroids
 
 
-# -----------------------------------------------------------------------------
-# def cluster_shapes(X: np.ndarray, k: int = 64, method: str = "kmeans", ...)
-# Summary:
-#   Validates inputs, clamps k ≤ n, and delegates to _kmeans_np (50 Lloyd steps
-#   by default). Returns (labels, centroids). No‑data case handled gracefully.
-# Effect:
-#   Groups similar morphism shapes across the corpus into k prototypical
-#   transitions. These prototypes act like a *vocabulary of transformations*
-#   that we can aggregate at the document level.
-# -----------------------------------------------------------------------------
 def cluster_shapes(
     X: np.ndarray,
     k: int = 64,
@@ -431,17 +345,6 @@ def cluster_shapes(
 # Document membership over shape clusters
 # ------------------------
 
-# -----------------------------------------------------------------------------
-# def doc_membership(rows: List[dict], shape_labels: np.ndarray, weight_mode="weighted", normalize=True)
-# Summary:
-#   Builds a document × shape matrix M by summing either per‑morphism weights
-#   or counts into the column indexed by that morphism’s cluster label. Rows are
-#   normalized to probability‑like vectors if requested. Returns (M, doc_ids).
-# Effect:
-#   Lifts fine‑grained morphism types to document‑level fingerprints (a
-#   distribution over shape prototypes). This is the bridge from local
-#   cluster‑to‑cluster geometry to global document organization.
-# -----------------------------------------------------------------------------
 def doc_membership(
     rows: List[dict],
     shape_labels: np.ndarray,
@@ -479,16 +382,7 @@ def doc_membership(
 # Hierarchical refinement
 # ------------------------
 
-# -----------------------------------------------------------------------------
-# def _normalized_entropy(P: np.ndarray, eps: float = 1e-12) -> float
-# Summary:
-#   Computes mean per‑row entropy normalized by log(K), where rows of P are
-#   assumed to sum to 1. Returns 0 when K ≤ 1 or P is empty.
-# Effect:
-#   A scalar “heterogeneity” index for membership distributions: higher values
-#   indicate diffuse (multi‑shape) documents and motivate further splits in the
-#   hierarchy; lower values indicate cohesive clusters that can be leaves.
-# -----------------------------------------------------------------------------
+
 def _normalized_entropy(P: np.ndarray, eps: float = 1e-12) -> float:
     """Mean per-doc normalized entropy over rows of P (each row should sum to 1)."""
     if P.size == 0 or P.shape[1] <= 1:
@@ -497,16 +391,6 @@ def _normalized_entropy(P: np.ndarray, eps: float = 1e-12) -> float:
     H = -np.sum(P * np.log(P), axis=1) / np.log(P.shape[1])
     return float(np.mean(H))
 
-# -----------------------------------------------------------------------------
-# def _kmeans_docs_np(M: np.ndarray, k: int, random_state: int = 0)
-# Summary:
-#   Runs k‑means on document membership rows to cluster documents at a given
-#   hierarchy node; clamps k to available docs and reuses the same robust
-#   initializer/loop as shape k‑means.
-# Effect:
-#   Produces data‑driven document groupings consistent with their morphism‑shape
-#   usage, setting up multi‑branch refinement rather than imposing a fixed tree.
-# -----------------------------------------------------------------------------
 def _kmeans_docs_np(M: np.ndarray, k: int, random_state: int = 0) -> Tuple[np.ndarray, np.ndarray]:
     """Wrapper to run k-means on document membership matrix M (rows=docs)."""
     if M.shape[0] == 0:
@@ -515,27 +399,6 @@ def _kmeans_docs_np(M: np.ndarray, k: int, random_state: int = 0) -> Tuple[np.nd
     labels, cents = _kmeans_np(M, k=min(k, max(1, M.shape[0])), n_iter=40, random_state=random_state)
     return labels, cents
 
-
-# -----------------------------------------------------------------------------
-# def build_hierarchy_all(document_delta_dict: Dict[str, tuple], depth=3, shape_k=64, doc_k=8, ...)
-# Summary:
-#   Multi‑branch hierarchical refinement of documents driven by morphism‑shape
-#   structure:
-#     1) Start with all docs at the root. Extract all morphism shapes for the
-#        subset, cluster them into `shape_k` prototypes, then compute doc‑level
-#        memberships (M) over these prototypes.
-#     2) Cluster documents in this node (k‑means on rows of M, k=doc_k).
-#     3) Compute node heterogeneity via normalized entropy over rows of M.
-#     4) For each child cluster with ≥ min_docs_to_split and heterogeneity ≥
-#        hetero_threshold, recurse until `depth` is reached.
-#   Returns a tree dict: nodes (id, level, doc_ids, doc_membership, etc.),
-#   root_id, and a doc_to_path index for downstream visualization.
-# Effect:
-#   Lets the corpus self‑organize by *how* texts transform internally rather
-#   than purely by topical vocabulary. Entropy‑gated splitting prevents
-#   over‑fragmentation, while per‑level shape clustering adapts to local
-#   variation (different subsets may express different transformation motifs).
-# -----------------------------------------------------------------------------
 def build_hierarchy_all(
     document_delta_dict: Dict[str, tuple],
     depth: int = 3,
@@ -565,35 +428,12 @@ def build_hierarchy_all(
     nodes: List[Dict[str, Any]] = []
     node_id_counter = 0
 
-    # -------------------------------------------------------------------------
-    # def new_node_id() -> int
-    # Summary:
-    #   Monotone id allocator captured in the outer scope; guarantees unique
-    #   integer ids for nodes as the tree grows.
-    # Effect:
-    #   Ensures stable node identifiers for cross‑references (e.g., doc_to_path
-    #   and visualization layers) during recursive construction.
-    # -------------------------------------------------------------------------
     def new_node_id() -> int:
         nonlocal node_id_counter
         nid = node_id_counter
         node_id_counter += 1
         return nid
 
-    # -------------------------------------------------------------------------
-    # def make_node(docs_subset: List[str], level: int, parent: Optional[int]) -> int
-    # Summary:
-    #   Core worker for one node:
-    #     • Builds a per‑subset document_delta_dict and extracts shapes.
-    #     • Clusters shapes → labels, then computes document memberships M.
-    #     • Clusters documents (rows of M) and computes node heterogeneity.
-    #     • Emits a node record and, if warranted by size/heterogeneity,
-    #       recurses to create children.
-    # Effect:
-    #   Encapsulates the *shape→membership→cluster→recurse* loop so each level
-    #   adapts to the local structure of the documents under that node. This
-    #   respects multiple “semantic regimes” that can exist within a collection.
-    # -------------------------------------------------------------------------
     def make_node(docs_subset: List[str], level: int, parent: Optional[int]) -> int:
         """Create a node for a subset of docs; cluster shapes then docs; decide children."""
         subset = {d: document_delta_dict[d] for d in docs_subset}
@@ -672,15 +512,6 @@ def build_hierarchy_all(
     # index nodes by id
     by_id = {n["id"]: n for n in nodes}
 
-    # -------------------------------------------------------------------------
-    # def walk(nid: int, path_prefix: List[int])
-    # Summary:
-    #   DFS over the built nodes to populate doc_to_path with the sequence of
-    #   node ids from root to each leaf that holds a document.
-    # Effect:
-    #   Produces a compact index used by interactive visualizations (e.g. Sankey)
-    #   to highlight full document paths through the arrangement.
-    # -------------------------------------------------------------------------
     def walk(nid: int, path_prefix: List[int]):
         node = by_id[nid]
         path = path_prefix + [nid]

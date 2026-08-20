@@ -25,7 +25,7 @@ import os
 import logging  
 from tkinter import filedialog
 
-logging.basicConfig(level=logging.INFO,format="%(asctime)s : %(levelname)s : %(message)s", datefmt='%m-%d %H:%M', filename=r'S:\Digital Projects\Encoding\testing\logs\xml_validation_log.txt', filemode='w')
+logging.basicConfig(level=logging.INFO,format="%(asctime)s : %(levelname)s : %(message)s", datefmt='%m-%d %H:%M', filename=r'C:\Users\dslocal\Desktop\xml_validation_log.txt', filemode='w')
 ch = logging.StreamHandler()
 ch.setLevel(logging.INFO) 
 formatter = logging.Formatter("%(asctime)s :%(levelname)s : %(message)s")
@@ -36,9 +36,9 @@ logging.basicConfig(filename='training.log',format="%(asctime)s : %(levelname)s 
 
 xml_dir = filedialog.askdirectory(title='Select Directory for XML')        
 
-schema_dir = filedialog.askdirectory(title='Select Directory for XSD Schema')  
+# schema_dir = filedialog.askopenfilename(title='Select Directory for XSD Schema')
 
-xsd = xmlschema.XMLSchema(schema_dir)                               
+xsd = xmlschema.XMLSchema(r"C:\Users\dslocal\Desktop\alto-3-0.xsd.xml")                               
 
 for xml in os.scandir(xml_dir): 
         if xml.is_file() and xml.name.endswith(".xml"): 
